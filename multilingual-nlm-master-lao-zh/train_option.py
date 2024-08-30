@@ -163,9 +163,3 @@ global_train_parser.add_argument(
     nargs='+',
     default=None
 )
-
-global_train_parser.add_argument(
-    '-loss_type',
-    default=0,
-    type=int,
-    help='0: inter loss; 1: inter+intra loss')

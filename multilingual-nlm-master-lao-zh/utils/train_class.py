@@ -58,7 +58,6 @@ class Trainer_MT():
         elif len(dataset.batch_idx_list[1]) != 0:
             logger.info("Unsupervised training")
             self.N_batch = self.mono_Nbatch
-        self.loss_type = opt.loss_type
 
     def main(self, model, epoch_size, stop_threshold, remove_models, early_stop):
         logger.info("epoch start")
@@ -160,24 +159,55 @@ class Trainer_MT():
                 tgt_list = list(range(dataset.lang_size))
                 if torch.cuda.device_count() <= 1:  # If single GPU, encode s_id once for computation efficiency
                     s_id_emb, hs, hs_list = self.model.encode(s_id, s_lengths)
+                    """ 获取源句子的向量 """
+
+                    """ 词嵌入的加权平均 - 将padding也给算进去 """
                     src_sent_emb = s_id_emb.mean(dim = 1)
-                    # src_sent_emb = hs.max(dim = 1)[0] # max pooling
+
+                    """ 词嵌入的加权平均 - 排除padding """
+                    # ts_s_lengths = torch.FloatTensor(s_lengths).to('cuda').unsqueeze(dim = 1)
+                    # ts_s_lengths = torch.repeat_interleave(ts_s_lengths, 500, dim = 1)
+                    # src_sent_emb = s_id_emb.sum(dim = 1) / ts_s_lengths
+
+                    """ 词嵌入的加权和 """
+                    # src_sent_emb = s_id_emb.sum(dim = 1)
+
+                    """ 隐藏层最后一层 """
+                    # src_sent_emb = hs[:, -1, :]
+
+                    """ 根据LASER使用共享LSTM编码器获取输出，采用max池化获得句嵌入 """
+                    # src_sent_emb = hs.max(dim = 1)[0]
 
                 for tgt in tgt_list:  # translation and reconstuction
                     self.model.Set_TgtLang(tgt, direction)
                     if torch.cuda.device_count() <= 1:
                         score, t_id_emb, ht_attn, ht = self.model.decode(t_id[direction][tgt], hs, s_lengths, s_id_emb)
 
-                        tgt_sent_emb = t_id_emb.mean(dim = 1)  # mean pooling
-                        # tgt_sent_emb = ht.max(dim = 1)[0]  # max pooling
+                        """ 获得目标句子的向量 """
+
+                        """ 词嵌入的加权平均 - 将padding也给算进去 """
+                        tgt_sent_emb = t_id_emb.mean(dim = 1)
+
+                        """ 词嵌入的加权平均 - 排除padding """
+                        # ts_t_lengths = torch.FloatTensor(t_lengths[tgt]).to('cuda').unsqueeze(dim = 1)
+                        # ts_t_lengths = torch.repeat_interleave(ts_t_lengths, 500, dim = 1)
+                        # tgt_sent_emb = t_id_emb.sum(dim = 1) / ts_t_lengths
+
+                        """ 词嵌入的加权和 """
+                        # tgt_sent_emb = t_id_emb.sum(dim = 1)
+
+                        """ 上下文交互层 - 包含注意力 - 最后一层 """
+                        # tgt_sent_emb = ht_attn[:, -1, :]
+
+                        """ 基于上面上下文交互层 - 包含注意力 - 采用最大池化作为句嵌入 """
+                        # tgt_sent_emb = ht_attn.max(dim = 1)[0]
+
+                        """ 解码器隐藏层 - 不包含注意力 - 采用最大池化作为句嵌入 """
+                        # tgt_sent_emb = ht.max(dim = 1)[0]
 
                         loss = self.model.cross_entropy(score, self.model.torch.LongTensor(t_id_EOS[direction][tgt]).view(-1))  # (bs * maxlen_t,)
 
-                        if self.loss_type == 0:
-                            cont_loss = self.inter_loss(src_sent_emb, tgt_sent_emb)
-                        else:
-                            cont_loss = self.inter_intra_loss(src_sent_emb, tgt_sent_emb, src, tgt)
-
+                        cont_loss = self.model.InfoNCE_loss(src_sent_emb, tgt_sent_emb)
                     else:
                         # For multiple GPUs, loss should be calculated inside the model for faster computation
                         # Also, all inputs need to be in GPU
@@ -196,16 +226,6 @@ class Trainer_MT():
                 self.optimizer.step()
                 self.cumloss += loss_all.data.tolist()
                 loss_all = 0
-
-    def inter_loss(self, src_sent_emb, tgt_sent_emb):
-        return self.model.InfoNCE_loss(src_sent_emb, tgt_sent_emb)
-
-    def inter_intra_loss(self, src_sent_emb, tgt_sent_emb, src, tgt):
-        if src != tgt:  # 翻译 - 两个方向，负例来自两个视图
-            cont_loss = self.model.Hinton_loss(src_sent_emb, tgt_sent_emb)
-        else:  # 重构 - 一个方向，负例来自一个视图
-            cont_loss = self.model.InfoNCE_loss(src_sent_emb, tgt_sent_emb)
-        return cont_loss
 
     def Update_params_supervised_multi(self, dataset, index, *args):
         loss_all = 0
