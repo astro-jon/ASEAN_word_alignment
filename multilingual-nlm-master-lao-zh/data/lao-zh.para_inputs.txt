@@ -1,0 +1,8 @@
+data_dir: D:\pythonProject\BLI_Exprement\multilingual-nlm-master-lao-zh/data/lao-zh.para
+para train_file0: ./data/lao.txt
+para train_file1: ./data/zh.txt
+shared_Vsize: 5
+Vsize0: 1134
+V_min_freq0: 4
+Vsize1: 1176
+V_min_freq1: 4
